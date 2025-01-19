@@ -1,15 +1,10 @@
+from PyQt5.QtWidgets import QApplication, QMainWindow, QMessageBox, QVBoxLayout, QLabel, QWidget, QPushButton, QLineEdit, QHBoxLayout, QScrollArea, QListWidget, QListWidgetItem, QTextBrowser, QTabWidget, QFrame, QGridLayout, QSplitter, QDesktopWidget
+from PyQt5.QtCore import Qt
+from PyQt5.QtGui import QFont, QPixmap
 import imaplib
 import email
 from email.header import decode_header
-from PyQt5.QtWidgets import (
-    QApplication, QMainWindow, QMessageBox, QVBoxLayout, QLabel, QWidget, QPushButton, QLineEdit,
-    QHBoxLayout, QScrollArea, QListWidget, QListWidgetItem, QTextBrowser, QTabWidget, QFrame, QGridLayout, QSplitter
-)
-from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QFont
 from datetime import datetime
-from PyQt5.QtGui import QPixmap
-
 
 class PhishEye(QMainWindow):
     def __init__(self):
@@ -18,20 +13,32 @@ class PhishEye(QMainWindow):
         self.password = None
         self.imap = None  # IMAP connection object
         self.init_login_ui()
+        
+    def center_window(self):
+        # Get screen geometry and window geometry
+        screen = QDesktopWidget().screenGeometry()
+        window = self.frameGeometry()
+        center = screen.center()
+        window.moveCenter(center)
+        self.move(window.topLeft())
 
     def init_login_ui(self):
         self.setWindowTitle("PhishEye - Login")
-        self.setGeometry(200, 200, 400, 300)
+        self.setGeometry(200, 200, 800, 300)
 
         layout = QVBoxLayout()
 
         # Logo Label
         self.logo_label = QLabel(self)
-        self.logo_pixmap = QPixmap("PhishEye/logo.png")  # Specify the path to your logo image
+        self.logo_pixmap = QPixmap("logo.png")  # Specify the path to your logo image
         self.logo_label.setPixmap(self.logo_pixmap.scaled(550, 454, Qt.KeepAspectRatio))
         self.logo_label.setAlignment(Qt.AlignCenter)
         layout.addWidget(self.logo_label)
 
+        # Create a container layout for centering input fields
+        input_layout = QVBoxLayout()
+        input_layout.setAlignment(Qt.AlignCenter)
+        
         # Email Input Field with Rounded Corners
         self.email_input = QLineEdit(self)
         self.email_input.setPlaceholderText("Email")
@@ -42,6 +49,7 @@ class PhishEye(QMainWindow):
                 padding: 10px;
             }
         """)
+        self.email_input.setAlignment(Qt.AlignCenter)
         layout.addWidget(self.email_input)
 
         # Password Input Field with Rounded Corners
@@ -55,6 +63,7 @@ class PhishEye(QMainWindow):
                 padding: 10px;
             }
         """)
+        self.password_input.setAlignment(Qt.AlignCenter)
         layout.addWidget(self.password_input)
 
         # Login Button
@@ -78,6 +87,8 @@ class PhishEye(QMainWindow):
         container = QWidget()
         container.setLayout(layout)
         self.setCentralWidget(container)
+        
+        self.center_window()  # Call the center window method
 
     def init_email_ui(self):
         self.setWindowTitle("PhishEye - Inbox")
@@ -121,6 +132,8 @@ class PhishEye(QMainWindow):
         container = QWidget()
         container.setLayout(main_layout)
         self.setCentralWidget(container)
+        
+        self.center_window()  # Call the center window method
 
     def login(self):
         self.email = self.email_input.text()
@@ -166,12 +179,16 @@ class PhishEye(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Error", f"An unexpected error occurred during logout: {e}")
 
-
     def confirm_clear(self):
         reply = QMessageBox.question(self, 'Clear Confirmation', 'Are you sure you want to clear all opened emails?',
                                      QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
         if reply == QMessageBox.Yes:
             self.clear_all_tabs()
+
+    def clear_all_tabs(self):
+        # Loop through and remove all tabs except for the first one (Inbox)
+        for i in range(self.tabs.count() - 1, 0, -1):
+            self.tabs.removeTab(i)
 
     def fetch_emails(self):
         if not self.imap:
@@ -238,67 +255,136 @@ class PhishEye(QMainWindow):
             formatted_date = dt.strftime("%a, %d %B %Y")
             formatted_time = dt.strftime("%I:%M:%S %p")
             return formatted_date, formatted_time
-        except Exception as e:
+        except Exception:
             return "Invalid Date", "Invalid Time"
 
     def display_split_view(self, item):
         email_id, subject = item.data(Qt.UserRole)
-        try:
-            status, msg_data = self.imap.fetch(email_id, "(RFC822)")
-            if status != "OK":
-                QMessageBox.warning(self, "Error", "Failed to fetch email content.")
-                return
+        status, msg_data = self.imap.fetch(email_id, "(RFC822)")
+        msg = email.message_from_bytes(msg_data[0][1])
 
-            for response_part in msg_data:
-                if isinstance(response_part, tuple):
-                    msg = email.message_from_bytes(response_part[1])
-                    left_content = QTextBrowser(self)
-                    left_content.setText(self.format_email_content(msg))
-
-                    right_content = QTextBrowser(self)
-                    right_content.setText(self.format_email_details(msg))
-
-                    splitter = QSplitter(self)
-                    splitter.addWidget(left_content)
-                    splitter.addWidget(right_content)
-
-                    email_tab = QWidget()
-                    email_tab_layout = QVBoxLayout()
-                    email_tab_layout.addWidget(splitter)
-                    email_tab.setLayout(email_tab_layout)
-
-                    self.tabs.addTab(email_tab, subject if subject else "Email Details")
-
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to display email: {e}")
-
-    def format_email_content(self, msg):
-        content = ""
+        body = None
         if msg.is_multipart():
             for part in msg.walk():
-                if part.get_content_type() == "text/plain":
-                    content += part.get_payload(decode=True).decode()
-        else:
-            content += msg.get_payload(decode=True).decode()
-        return content.strip()
+                content_type = part.get_content_type()
+                if content_type == "text/plain":
+                    body = part.get_payload(decode=True).decode()
 
-    def format_email_details(self, msg):
-        details = "Headers:\n"
-        for header, value in msg.items():
-            details += f"{header}: {value}\n"
-        return details.strip()
+        if body is None:
+            body = "No email content available."
+
+        self.display_email_content(subject, body)
+
+    def display_email_content(self, subject, body):
+        # Create the main widget for the split view
+        split_view_widget = QWidget(self)
+        split_view_layout = QHBoxLayout()
+
+        # Left side: Display email content (subject, body, sender, date, etc.)
+        left_panel_widget = QWidget(self)
+        left_panel_layout = QVBoxLayout()
+
+        # Subject, Sender, Date, and Time
+        email_details_layout = QGridLayout()
+        subject_label = QLabel(f"<b>Subject:</b> {subject}")
+        sender_label = QLabel(f"<b>From:</b> {self.sender}")
+        date_label = QLabel(f"<b>Date:</b> {self.format_datetime(datetime.now())[0]}")
+        time_label = QLabel(f"<b>Time:</b> {self.format_datetime(datetime.now())[1]}")
+        
+        email_details_layout.addWidget(subject_label, 0, 0)
+        email_details_layout.addWidget(sender_label, 1, 0)
+        email_details_layout.addWidget(date_label, 0, 1)
+        email_details_layout.addWidget(time_label, 1, 1)
+
+        left_panel_layout.addLayout(email_details_layout)
+
+        # Email Body
+        email_body_browser = QTextBrowser(self)
+        email_body_browser.setHtml(f"<h3>{subject}</h3><p>{body}</p>")
+        left_panel_layout.addWidget(email_body_browser)
+
+        left_panel_widget.setLayout(left_panel_layout)
+
+        # Right side: Display email meta details (IP address, server details, etc.)
+        right_panel_widget = QWidget(self)
+        right_panel_layout = QVBoxLayout()
+
+        # Create a table for meta data (e.g., Source IP, forwarded server, etc.)
+        metadata_table = QGridLayout()
+
+        # Example data (replace with actual extracted details)
+        metadata = [
+            ("Source IP Address", "192.168.1.1"),
+            ("Received From", "mailserver.example.com"),
+            ("Forwarded From", "smtp.example.com"),
+            ("Server IP", "203.0.113.5"),
+            ("Email Size", "2 MB"),
+            ("SPF Status", "Pass"),
+            ("DKIM Status", "Pass"),
+            ("DMARC Status", "Pass"),
+            ("X-Mailer", "Microsoft Outlook 16.0"),
+            ("Received Date", "2025-01-19 14:25:00"),
+        ]
+
+        for row, (key, value) in enumerate(metadata):
+            key_label = QLabel(f"<b>{key}:</b>")
+            value_label = QLabel(value)
+            metadata_table.addWidget(key_label, row, 0)
+            metadata_table.addWidget(value_label, row, 1)
+
+        right_panel_layout.addLayout(metadata_table)
+        right_panel_widget.setLayout(right_panel_layout)
+        
+        # Analyse Button to open a new window
+        self.analyse_button = QPushButton("Analyse", self)
+        self.analyse_button.setStyleSheet("""
+            QPushButton {
+                background-color: #1e64fe;
+                color: white;
+                border-radius: 10px;
+                padding: 10px;
+            }
+            QPushButton:hover {
+                background-color: #1e64fe;
+            }
+        """)
+        self.analyse_button.clicked.connect(self.open_analysis_window)
+        right_panel_layout.addWidget(self.analyse_button)
+
+        # Add both panels (left and right) to the split view layout
+        split_view_layout.addWidget(left_panel_widget, 2)  # Adjust the weight for proper splitting
+        split_view_layout.addWidget(right_panel_widget, 1)
+
+        split_view_widget.setLayout(split_view_layout)
+
+        # Add the split view as a new tab
+        self.tabs.addTab(split_view_widget, subject)
+    
+    def open_analysis_window(self):
+        # Open a new window for analysis (to be expanded later)
+        self.analysis_window = QMainWindow(self)
+        self.analysis_window.setWindowTitle("Email Analysis")
+        self.analysis_window.setGeometry(200, 200, 500, 400)
+
+        # Central widget for analysis window
+        central_widget = QWidget()
+        self.analysis_window.setCentralWidget(central_widget)
+
+        # Add a label as placeholder for analysis window
+        analysis_layout = QVBoxLayout()
+        analysis_label = QLabel("Email Analysis will be implemented here.", central_widget)
+        analysis_label.setAlignment(Qt.AlignCenter)
+        analysis_layout.addWidget(analysis_label)
+
+        central_widget.setLayout(analysis_layout)
+        self.analysis_window.show()
 
     def close_tab(self, index):
-        if index != 0:
-            self.tabs.removeTab(index)
+        self.tabs.removeTab(index)
 
-    def clear_all_tabs(self):
-        for i in range(self.tabs.count() - 1, 0, -1):
-            self.tabs.removeTab(i)
-
-
+# Run the application
 if __name__ == "__main__":
     app = QApplication([])
     window = PhishEye()
     window.show()
-    app.exec()
+    app.exec_()
