@@ -75,10 +75,6 @@ We welcome contributions to improve **PhishEye**! If you have suggestions, impro
 5. Push to the branch (`git push origin feature-name`).
 6. Open a pull request.
 
-## License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
 ## Acknowledgments
 
 - **PyQt5:** For building the graphical user interface.
