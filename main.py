@@ -3,12 +3,13 @@ from PyQt5.QtWidgets import (
     QListWidget, QListWidgetItem, QTextBrowser, QTabWidget, QGridLayout, QDesktopWidget, QMenuBar, QMenu, QAction,
     QScrollArea, QSplitter, QFrame, QTabBar, QTableWidget, QTableWidgetItem, QDialog
 )
-from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QFont, QPixmap, QColor, QPalette, QMovie
+from PyQt5.QtCore import Qt, QSize, QTimer
+from PyQt5.QtGui import QFont, QPixmap, QColor, QPalette, QMovie, QIcon
 import imaplib
 import email
 from email.header import decode_header
 from datetime import datetime
+import re
 import requests  # For VirusTotal API integration (placeholder)
 
 class PhishEye(QMainWindow):
@@ -41,7 +42,7 @@ class PhishEye(QMainWindow):
 
         # Logo Label
         self.logo_label = QLabel(self)
-        self.logo_pixmap = QPixmap("logo.png")  # Specify the path to your logo image
+        self.logo_pixmap = QPixmap("img/logo.png")  
         self.logo_label.setPixmap(self.logo_pixmap.scaled(550, 454, Qt.KeepAspectRatio))
         self.logo_label.setAlignment(Qt.AlignCenter)
         layout.addWidget(self.logo_label)
@@ -106,7 +107,7 @@ class PhishEye(QMainWindow):
 
         # Loading Icon (Initially Hidden)
         self.loading_label = QLabel(self)
-        self.loading_movie = QMovie("loading.gif")  # Path to your loading GIF
+        self.loading_movie = QMovie("img/loading.gif") 
         self.loading_label.setMovie(self.loading_movie)
         self.loading_label.setAlignment(Qt.AlignCenter)
         self.loading_label.hide()  # Hide by default
@@ -117,11 +118,69 @@ class PhishEye(QMainWindow):
         container.setLayout(layout)
         self.setCentralWidget(container)
 
-        # Menu Bar
-        self.init_menu_bar()
+        # Center the login screen on the screen
+        self.center_on_screen()
 
-        self.center_window()
+    def login(self):
+        """Handle user login."""
+        # Replace the login button text with the loading GIF
+        self.login_button.setText("")  # Clear the button text
+        self.login_button.setIcon(QIcon("img/loading.gif"))  # Set the loading GIF as the button icon
+        self.login_button.setIconSize(QSize(50, 20))  # Set the icon size
+        self.login_button.setEnabled(False)  # Disable the button during login
 
+        # Use a QTimer to introduce a short delay before starting the login process
+        QTimer.singleShot(100, self.perform_login)  # 100ms delay
+
+    def perform_login(self):
+        """Perform the login process after a short delay."""
+        # Get user input
+        self.email = self.email_input.text()
+        self.password = self.password_input.text()
+        self.imap_server = self.imap_input.text()
+
+        if not self.email or not self.password or not self.imap_server:
+            QMessageBox.warning(self, "Input Error", "Please enter email, password, and IMAP server.")
+            # Restore the login button
+            self.restore_login_button()
+            return
+
+        try:
+            # Attempt to log in
+            self.imap = imaplib.IMAP4_SSL(self.imap_server)
+            self.imap.login(self.email, self.password)
+
+            # Update status and transition to the email UI
+            self.statusBar().showMessage(f"Logged in as {self.email}")
+            self.init_email_ui()
+            self.fetch_emails()
+
+        except imaplib.IMAP4.error:
+            QMessageBox.critical(self, "Login Failed", "Invalid email, password, or IMAP server.")
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"An unexpected error occurred: {e}")
+        finally:
+            # Restore the login button
+            self.restore_login_button()
+
+    def restore_login_button(self):
+        """Restore the login button to its original state."""
+        self.login_button.setIcon(QIcon())  # Clear the icon
+        self.login_button.setText("Login")  # Restore the button text
+        self.login_button.setEnabled(True)  # Re-enable the button
+        
+    def center_on_screen(self):
+        """Manually center the login screen on the screen."""
+        screen = QDesktopWidget().screenGeometry()  # Get the screen geometry
+        window = self.geometry()  # Get the window geometry
+
+        # Calculate the top-left corner of the window
+        x = (screen.width() - window.width()) // 2
+        y = (screen.height() - window.height()) // 5
+
+        # Move the window to the calculated position
+        self.move(x, y)
+        
     def init_menu_bar(self):
         """Initialize the menu bar."""
         menubar = self.menuBar()
@@ -163,40 +222,7 @@ class PhishEye(QMainWindow):
             palette.setColor(QPalette.Highlight, QColor(42, 130, 218))
             palette.setColor(QPalette.HighlightedText, Qt.white)
         QApplication.setPalette(palette)
-
-    def login(self):
-        """Handle user login."""
-        self.email = self.email_input.text()
-        self.password = self.password_input.text()
-        self.imap_server = self.imap_input.text()
-
-        if not self.email or not self.password or not self.imap_server:
-            QMessageBox.warning(self, "Input Error", "Please enter email, password, and IMAP server.")
-            return
-
-        # Disable the login button and show the loading icon
-        self.login_button.setEnabled(False)
-        self.loading_label.show()
-        self.loading_movie.start()
-
-        try:
-            self.imap = imaplib.IMAP4_SSL(self.imap_server)
-            self.imap.login(self.email, self.password)
-
-            self.statusBar().showMessage(f"Logged in as {self.email}")
-            self.init_email_ui()
-            self.fetch_emails()
-
-        except imaplib.IMAP4.error:
-            QMessageBox.critical(self, "Login Failed", "Invalid email, password, or IMAP server.")
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"An unexpected error occurred: {e}")
-        finally:
-            # Re-enable the login button and hide the loading icon
-            self.login_button.setEnabled(True)
-            self.loading_label.hide()
-            self.loading_movie.stop()
-
+        
     def init_email_ui(self):
         """Initialize the email UI."""
         self.setWindowTitle("PhishEye - Inbox")
@@ -477,9 +503,17 @@ class PhishEye(QMainWindow):
             QMessageBox.warning(self, "Error", "No email content found.")
             return
 
+        # Get the email message object
+        email_item = self.email_list.currentItem()
+        if not email_item:
+            QMessageBox.warning(self, "Error", "No email selected.")
+            return
+
+        email_id, subject, msg = email_item.data(Qt.UserRole)
+
         # Extract attachments and URLs from the email
+        attachments = self.extract_attachments(msg)
         email_content = email_body_browser.toPlainText()
-        attachments = self.extract_attachments(email_content)
         urls = self.extract_urls(email_content)
 
         # Combine attachments and URLs into a single list
@@ -488,7 +522,7 @@ class PhishEye(QMainWindow):
         # Create the analysis window
         self.email_analysis_window = QMainWindow(self)
         self.email_analysis_window.setWindowTitle("Detailed Email Analysis")
-        self.email_analysis_window.setGeometry(100, 100, 800, 600)
+        self.email_analysis_window.setFixedSize(800, 500)  # Fixed window size
 
         # Central widget for the analysis window
         central_widget = QWidget()
@@ -499,11 +533,13 @@ class PhishEye(QMainWindow):
 
         # Section Label
         section_label = QLabel("<b>Attachments and URLs:</b>")
+        section_label.setStyleSheet("font-size: 16px; font-weight: bold; margin-bottom: 10px;")
         main_layout.addWidget(section_label)
 
         if items:
             # Create a scroll area to handle many items
             scroll_area = QScrollArea()
+            scroll_area.setWidgetResizable(True)
             scroll_widget = QWidget()
             scroll_layout = QVBoxLayout(scroll_widget)
 
@@ -514,19 +550,40 @@ class PhishEye(QMainWindow):
 
                 # Add the item (attachment or URL) to the row
                 item_label = QLabel(item)
-                row_layout.addWidget(item_label)
+                item_label.setStyleSheet("font-size: 14px;")
+                row_layout.addWidget(item_label, stretch=1)  # Allow the label to stretch
 
                 # Add "Check for Malware" button
                 malware_button = QPushButton("Check for Malware")
                 malware_button.setFixedSize(150, 30)  # Fixed button size
-                malware_button.setStyleSheet("background-color: #1e64fe; color: white;")
+                malware_button.setStyleSheet("""
+                    QPushButton {
+                        background-color: #1e64fe;
+                        color: white;
+                        border-radius: 5px;
+                        font-size: 12px;
+                    }
+                    QPushButton:hover {
+                        background-color: #1652cc;
+                    }
+                """)
                 malware_button.clicked.connect(lambda _, x=item: self.check_attachment_malware(x))
                 row_layout.addWidget(malware_button)
 
                 # Add "Check in Safe Environment" button
                 safe_env_button = QPushButton("Check in Safe Environment")
                 safe_env_button.setFixedSize(150, 30)  # Fixed button size
-                safe_env_button.setStyleSheet("background-color: #1e64fe; color: white;")
+                safe_env_button.setStyleSheet("""
+                    QPushButton {
+                        background-color: #1e64fe;
+                        color: white;
+                        border-radius: 5px;
+                        font-size: 12px;
+                    }
+                    QPushButton:hover {
+                        background-color: #1652cc;
+                    }
+                """)
                 safe_env_button.clicked.connect(lambda _, x=item: self.check_attachment_safe_env(x))
                 row_layout.addWidget(safe_env_button)
 
@@ -535,35 +592,52 @@ class PhishEye(QMainWindow):
 
             # Set up the scroll area
             scroll_area.setWidget(scroll_widget)
-            scroll_area.setWidgetResizable(True)
             main_layout.addWidget(scroll_area)
         else:
             # Display a message if no attachments or URLs are found
             no_items_label = QLabel("There is nothing attached.")
+            no_items_label.setStyleSheet("font-size: 14px; color: gray;")
             main_layout.addWidget(no_items_label)
 
         # Close Button
         close_button = QPushButton("Close")
-        close_button.setStyleSheet("background-color: #1e64fe; color: white;")
+        close_button.setFixedSize(100, 30)  # Fixed button size
+        close_button.setStyleSheet("""
+            QPushButton {
+                background-color: #1e64fe;
+                color: white;
+                border-radius: 5px;
+                font-size: 12px;
+            }
+            QPushButton:hover {
+                background-color: #1652cc;
+            }
+        """)
         close_button.clicked.connect(self.email_analysis_window.close)
-        main_layout.addWidget(close_button)
+        main_layout.addWidget(close_button, alignment=Qt.AlignCenter)
 
         # Set layout for central widget
         central_widget.setLayout(main_layout)
         self.email_analysis_window.show()
-
-    def extract_attachments(self, email_content):
-        """Extract attachments from the email content."""
-        # Placeholder: Replace with actual logic to extract attachments
-        # For now, return an empty list
-        return []
+    
+    def extract_attachments(self, msg):
+        """Extract attachments from the email."""
+        attachments = []
+        if msg.is_multipart():
+            for part in msg.walk():
+                if part.get_content_disposition() == "attachment":
+                    filename = part.get_filename()
+                    if filename:
+                        attachments.append(filename)
+        return attachments
 
     def extract_urls(self, email_content):
-        """Extract URLs from the email content."""
-        # Placeholder: Replace with actual logic to extract URLs
-        # For now, return an empty list
-        return []
-
+        """Extract URLs from the email body."""
+        # Regular expression to find URLs
+        url_pattern = re.compile(r'https?://\S+')
+        urls = url_pattern.findall(email_content)
+        return urls
+    
     def check_attachment_safe_env(self, attachment):
         """Placeholder for checking an attachment in a safe environment."""
         QMessageBox.information(self, "Safe Environment Check", f"Checking {attachment} in a safe environment...")
