@@ -12,8 +12,9 @@ from datetime import datetime
 import hashlib
 import requests
 from email.utils import parseaddr
+import os
+import subprocess
 import re
-import requests  # For VirusTotal API integration (placeholder)
 
 class PhishEye(QMainWindow):
     def __init__(self):
@@ -22,7 +23,7 @@ class PhishEye(QMainWindow):
         self.password = None
         self.imap_server = "imap.gmail.com"
         self.imap = None
-        self.dark_mode = False  # Default: Light Mode
+        self.dark_mode = True  # Default: Light Mode
 
         # Apply dark mode if enabled
         self.toggle_dark_mode()
@@ -326,19 +327,19 @@ class PhishEye(QMainWindow):
         # **User Name**
         full_name = self.fetch_user_full_name()
         name_label = QLabel(f"<b>{full_name}</b>")
-        name_label.setStyleSheet(f"font-size: 16px; color: {text_color};")  # Dynamic color
+        name_label.setStyleSheet(f"font-size: 20px; color: {text_color};")
         name_label.setAlignment(Qt.AlignCenter)
         layout.addWidget(name_label)
 
         # **Email ID**
         email_label = QLabel(f"{self.email}")
-        email_label.setStyleSheet(f"font-size: 14px; color: {text_color};")  # Dynamic color
+        email_label.setStyleSheet(f"font-size: 16px; color: {text_color};")
         email_label.setAlignment(Qt.AlignCenter)
         layout.addWidget(email_label)
 
         # **IMAP Server (Optional)**
         imap_label = QLabel(f"IMAP Server: {self.imap_server}")
-        imap_label.setStyleSheet(f"font-size: 12px; color: {text_color};")  # Dynamic color
+        imap_label.setStyleSheet(f"font-size: 14px; color: {text_color};")
         imap_label.setAlignment(Qt.AlignCenter)
         layout.addWidget(imap_label)
 
@@ -743,12 +744,74 @@ class PhishEye(QMainWindow):
         QMessageBox.information(self, "Safe Environment Check", f"Checking {attachment} in a safe environment...")
 
     def check_attachment_malware(self, attachment):
-        """Placeholder for checking an attachment for malware."""
-        safe = True  # Example outcome
-        if safe:
-            QMessageBox.information(self, "Malware Check", f"{attachment} is safe.")
-        else:
-            QMessageBox.warning(self, "Malware Check", f"{attachment} contains malware!")
+        """Scan the attachment for malware and display the analysis results."""
+        if not attachment:
+            QMessageBox.warning(self, "Error", "No file selected.")
+            return
+
+        # **Create Analyzing Window**
+        self.analyzing_window = QDialog(self)
+        self.analyzing_window.setWindowTitle(f"Analyzing {attachment}")
+        self.analyzing_window.setFixedSize(500, 400)
+
+        layout = QVBoxLayout()
+
+        # **File Type-Based Threats**
+        file_ext = os.path.splitext(attachment)[1].lower()
+        threats = self.get_potential_threats(file_ext)
+
+        threat_label = QLabel("<b>Potential Threats:</b>")
+        threat_label.setStyleSheet("font-size: 16px; font-weight: bold;")
+        layout.addWidget(threat_label)
+
+        threats_text = QTextBrowser()
+        threats_text.setPlainText("\n".join(threats) if threats else "No specific threats detected for this file type.")
+        layout.addWidget(threats_text)
+
+        # **Perform Malware Scan**
+        scan_result = self.scan_file_for_malware(attachment)
+
+        # **Display Scan Results**
+        result_label = QLabel("<b>Scan Results:</b>")
+        result_label.setStyleSheet("font-size: 16px; font-weight: bold;")
+        layout.addWidget(result_label)
+
+        result_text = QTextBrowser()
+        result_text.setPlainText(scan_result)
+        layout.addWidget(result_text)
+
+        # **Close Button**
+        close_button = QPushButton("Close")
+        close_button.clicked.connect(self.analyzing_window.close)
+        layout.addWidget(close_button)
+
+        self.analyzing_window.setLayout(layout)
+        self.analyzing_window.exec_()
+
+    def get_potential_threats(self, file_ext):
+        """Return common threats based on file extension."""
+        threats_dict = {
+            ".exe": ["Trojan horses", "Ransomware", "Backdoors"],
+            ".docx": ["Macro viruses", "Embedded scripts"],
+            ".pdf": ["Malicious JavaScript", "Exploit payloads"],
+            ".xlsm": ["Excel Macro Malware"],
+            ".zip": ["Packed malware", "Hidden executables"],
+            ".js": ["Obfuscated JavaScript", "Malicious redirects"],
+        }
+        return threats_dict.get(file_ext, ["Unknown threats or safe file type."])
+
+    def scan_file_for_malware(self, file_path):
+        """Scan a file using ClamAV and return the result."""
+        try:
+            result = subprocess.run(["clamscan", file_path], capture_output=True, text=True)
+
+            if "FOUND" in result.stdout:
+                return f"⚠️ Malware Detected: {result.stdout.split(':')[-1].strip()}"
+            else:
+                return f"✅ {os.path.basename(file_path)} is safe to open."
+        
+        except Exception as e:
+            return f"Error scanning file: {e}"
 
     def check_url_safe_env(self, url):
         """Placeholder for checking a URL in a safe environment."""
