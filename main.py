@@ -238,12 +238,13 @@ class PhishEye(QMainWindow):
             self.update_analysis_text_color(text_color)
 
     def init_email_ui(self):
-        """Initialize the email UI."""
+        """Initialize the email UI with Inbox tab fixed at the top left."""
         self.setWindowTitle("PhishEye - Inbox")
         self.setGeometry(200, 200, 1200, 700)
 
         main_layout = QVBoxLayout()
 
+        # **Inbox Section**
         self.inbox_widget = QWidget(self)
         self.inbox_layout = QVBoxLayout()
 
@@ -251,27 +252,36 @@ class PhishEye(QMainWindow):
         self.email_list.itemClicked.connect(self.display_split_view)
         self.inbox_layout.addWidget(self.email_list)
 
-        # Settings Button
+        # **Settings Button**
         self.settings_button = QPushButton("Settings", self)
         self.settings_button.setStyleSheet("background-color: #1e64fe; color: white;")
         self.settings_button.clicked.connect(self.open_settings_window)
         self.inbox_layout.addWidget(self.settings_button)
 
-        # Clear Button
+        # **Clear Button**
         self.clear_button = QPushButton("Clear", self)
         self.clear_button.setStyleSheet("background-color: black; color: white;")
         self.clear_button.clicked.connect(self.confirm_clear)
         self.inbox_layout.addWidget(self.clear_button)
 
         self.inbox_widget.setLayout(self.inbox_layout)
+
+        # **Tabs Setup**
         self.tabs = QTabWidget(self)
         self.tabs.setTabsClosable(True)
         self.tabs.tabCloseRequested.connect(self.close_tab)
-        self.tabs.addTab(self.inbox_widget, "Inbox")
+        self.tabs.setMovable(True)  # Allow reordering
 
-        # Make the Inbox tab non-closable
-        self.tabs.tabBar().setTabButton(0, QTabBar.RightSide, None)
+        # ✅ **Align tabs at the top left**
+        self.tabs.setTabPosition(QTabWidget.North)  # Tabs on top
+        self.tabs.setLayoutDirection(Qt.LeftToRight)  # Start from left side
 
+        # **Inbox Tab (Fixed & Non-Closable)**
+        self.tabs.addTab(self.inbox_widget, "📥 Inbox")
+        self.tabs.tabBar().setTabButton(0, QTabBar.RightSide, None)  # Make non-closable
+        self.tabs.tabBar().setExpanding(False)  # Prevent stretching
+
+        # **Logout Button (Right Aligned)**
         logout_layout = QHBoxLayout()
         logout_layout.addStretch()
         self.logout_button = QPushButton("Logout")
@@ -279,12 +289,14 @@ class PhishEye(QMainWindow):
         self.logout_button.clicked.connect(self.confirm_logout)
         logout_layout.addWidget(self.logout_button)
 
+        # **Bottom Layout (Align Buttons Properly)**
         bottom_layout = QHBoxLayout()
         bottom_layout.addWidget(self.settings_button)
         bottom_layout.addWidget(self.clear_button)
         bottom_layout.addStretch()
         bottom_layout.addWidget(self.logout_button)
 
+        # **Final Layout**
         main_layout.addWidget(self.tabs)
         main_layout.addLayout(bottom_layout)
 
@@ -293,6 +305,10 @@ class PhishEye(QMainWindow):
         self.setCentralWidget(container)
 
         self.center_window()
+
+    def get_short_subject(self, subject, length=10):
+        """Shorten the subject for tab display."""
+        return subject if len(subject) <= length else subject[:length] + "..."
 
     def open_settings_window(self):
         """Open the settings window and display user account details with dynamic text color."""
@@ -479,9 +495,18 @@ class PhishEye(QMainWindow):
             return "Invalid Date", "Invalid Time"
 
     def display_split_view(self, item):
-        """Display email content in a split view."""
+        """Display email content in a split view, or switch to the existing tab if it's already open."""
         email_id, subject, msg = item.data(Qt.UserRole)
 
+        # Check if the email is already open in a tab
+        for i in range(self.tabs.count()):
+            tab_title = self.tabs.tabText(i)
+            if tab_title == subject:
+                # If tab with the same subject is already open, switch to it
+                self.tabs.setCurrentIndex(i)
+                return
+
+        # If the tab is not already open, create a new tab
         body = None
         if msg.is_multipart():
             for part in msg.walk():
@@ -495,7 +520,8 @@ class PhishEye(QMainWindow):
         self.display_email_content(subject, body, msg)
 
     def display_email_content(self, subject, body, msg):
-        """Display email content and metadata."""
+        """Display email content and metadata with proper formatting and attachments."""
+
         split_view_widget = QWidget(self)
         split_view_layout = QHBoxLayout()
 
@@ -503,7 +529,7 @@ class PhishEye(QMainWindow):
         left_panel_widget = QWidget(self)
         left_panel_layout = QVBoxLayout()
 
-        # Extract sender's email using email.utils.parseaddr
+        # Extract sender's email
         from_header = msg.get("From")
         sender_name, sender_email = email.utils.parseaddr(from_header)
 
@@ -511,11 +537,11 @@ class PhishEye(QMainWindow):
         raw_date = msg.get("Date")
         formatted_date, formatted_time = self.format_datetime(raw_date)
 
-        # Subject, Sender, Date, and Time
+        # **Email Header Details**
         email_details_layout = QGridLayout()
         subject_label = QLabel(f"<b>Subject:</b> {subject}")
         email_details_layout.addWidget(subject_label, 0, 0)
-        sender_label = QLabel(f"<b>From:</b> {sender_email}")  # Display sender's email
+        sender_label = QLabel(f"<b>From:</b> {sender_email}")
         email_details_layout.addWidget(sender_label, 1, 0)
         date_label = QLabel(f"<b>Date:</b> {formatted_date}")
         date_label.setAlignment(Qt.AlignRight)
@@ -526,33 +552,36 @@ class PhishEye(QMainWindow):
 
         left_panel_layout.addLayout(email_details_layout)
 
-        # Email Body
+        # **Properly Format Email Body**
+        formatted_body = self.format_email_body(body)
+
         email_body_browser = QTextBrowser(self)
-        email_body_browser.setHtml(f"<h3>{subject}</h3><p>{body}</p>")
+        email_body_browser.setHtml(formatted_body)  # Display formatted email content
         left_panel_layout.addWidget(email_body_browser)
+
+        # **Display Attachments at the Bottom**
+        attachments = self.extract_attachments(msg)
+        if attachments:
+            attachments_label = QLabel("<b>Attachments:</b>")
+            left_panel_layout.addWidget(attachments_label)
+            for attachment in attachments:
+                attachment_label = QLabel(f"📎 {attachment}")
+                left_panel_layout.addWidget(attachment_label)
 
         left_panel_widget.setLayout(left_panel_layout)
 
-        # Right Panel: Metadata
+        # Right Panel: Metadata (Optional)
         right_panel_widget = QWidget(self)
         right_panel_layout = QVBoxLayout()
 
-        # Metadata Table
         metadata_table = QTableWidget(self)
         metadata_table.setColumnCount(2)
         metadata_table.setHorizontalHeaderLabels(["Key", "Value"])
         metadata_table.horizontalHeader().setStretchLastSection(True)
         metadata_table.setEditTriggers(QTableWidget.NoEditTriggers)
 
-        # Extract forensic metadata from email headers
         received_headers = msg.get_all("Received", [])
-        metadata = []
-
-        for header in received_headers:
-            # Parse the Received header
-            metadata.append(("Received Header", header))
-
-        # Add additional forensic details
+        metadata = [( "Received Header", header) for header in received_headers]
         metadata.extend([
             ("Message-ID", msg.get("Message-ID", "N/A")),
             ("Return-Path", msg.get("Return-Path", "N/A")),
@@ -586,14 +615,25 @@ class PhishEye(QMainWindow):
 
         right_panel_widget.setLayout(right_panel_layout)
 
-        # Add both panels to the split view layout
+        # Add both panels to the split view
         split_view_layout.addWidget(left_panel_widget, 2)
         split_view_layout.addWidget(right_panel_widget, 1)
 
         split_view_widget.setLayout(split_view_layout)
 
-        # Add the split view as a new tab
+        # Add as a new tab
         self.tabs.addTab(split_view_widget, subject)
+    
+    def format_email_body(self, body):
+        """Format email body to preserve paragraphs and line breaks like Gmail."""
+        
+        if not body:
+            return "<i>No content available</i>"
+
+        # Convert newline characters to HTML <br> for proper formatting
+        formatted_body = body.replace("\n\n", "</p><p>").replace("\n", "<br>")
+
+        return f"<p>{formatted_body}</p>"
 
     def open_email_analysis_window(self):
         """Open a new window for detailed email analysis with dynamic text color."""
