@@ -15,6 +15,11 @@ from email.utils import parseaddr
 import os
 import subprocess
 import re
+import tempfile
+import shutil
+import tensorflow as tf
+import numpy as np
+import re
 
 class PhishEye(QMainWindow):
     def __init__(self):
@@ -23,9 +28,10 @@ class PhishEye(QMainWindow):
         self.password = None
         self.imap_server = "imap.gmail.com"
         self.imap = None
-        self.dark_mode = True  # Default: Light Mode
-
-        # Apply dark mode if enabled
+        self.url_model = None  
+        self.file_model = None  
+        self.load_malware_models()  
+        self.dark_mode = True 
         self.toggle_dark_mode()
         self.init_login_ui()
 
@@ -84,7 +90,7 @@ class PhishEye(QMainWindow):
         # IMAP Server Input Field
         self.imap_input = QLineEdit(self)
         self.imap_input.setPlaceholderText("IMAP Server (e.g., imap.gmail.com)")
-        self.imap_input.setText(self.imap_server)  # Default value
+        self.imap_input.setText(self.imap_server) 
         self.imap_input.setStyleSheet("""
             QLineEdit {
                 border-radius: 15px;
@@ -115,10 +121,10 @@ class PhishEye(QMainWindow):
         # Loading Icon (Initially Hidden)
         self.loading_label = QLabel(self)
         self.loading_movie = QMovie("img/loading.png")  
-        self.loading_movie.setScaledSize(QSize(200, 40))  # Adjust size here (Width x Height)
+        self.loading_movie.setScaledSize(QSize(200, 40))  
         self.loading_label.setMovie(self.loading_movie)
         self.loading_label.setAlignment(Qt.AlignCenter)
-        self.loading_label.hide()  # Hide by default
+        self.loading_label.hide()  
         layout.addWidget(self.loading_label)
 
         # Set the layout
@@ -139,7 +145,7 @@ class PhishEye(QMainWindow):
         self.loading_movie.start()
 
         # Delay the login process slightly to show animation
-        QTimer.singleShot(100, self.perform_login)  # 100ms delay
+        QTimer.singleShot(100, self.perform_login) 
 
     def perform_login(self):
         """Perform the login process after a short delay."""
@@ -173,10 +179,33 @@ class PhishEye(QMainWindow):
         self.loading_label.hide()
         self.login_button.show()
 
+    def open_email_without_redirect(self, item):
+        """Double-click: Open email in a new tab but do not switch to it."""
+        email_id, subject, msg = item.data(Qt.UserRole)
+        
+        # Open the email using `display_email_content()`
+        self.display_email_content(subject, msg)
+
+    def open_email_and_redirect(self, pos):
+        """Right-click: Open email and switch to that tab."""
+        item = self.email_list.itemAt(pos)
+        if item:
+            email_id, subject, msg = item.data(Qt.UserRole)
+
+            # Open email
+            self.display_email_content(subject, msg)
+
+            # Switch to the newly opened tab
+            short_subject = self.get_short_subject(subject, length=15)
+            for i in range(self.tabs.count()):
+                if self.tabs.tabText(i) == short_subject:
+                    self.tabs.setCurrentIndex(i)
+                    break
+
     def center_on_screen(self):
         """Manually center the login screen on the screen."""
-        screen = QDesktopWidget().screenGeometry()  # Get the screen geometry
-        window = self.geometry()  # Get the window geometry
+        screen = QDesktopWidget().screenGeometry() 
+        window = self.geometry() 
 
         # Calculate the top-left corner of the window
         x = (screen.width() - window.width()) // 2
@@ -244,21 +273,23 @@ class PhishEye(QMainWindow):
 
         main_layout = QVBoxLayout()
 
-        # **Inbox Section**
+        # Inbox Section
         self.inbox_widget = QWidget(self)
         self.inbox_layout = QVBoxLayout()
 
         self.email_list = QListWidget()
-        self.email_list.itemClicked.connect(self.display_split_view)
+        self.email_list.setContextMenuPolicy(Qt.CustomContextMenu) 
+        self.email_list.customContextMenuRequested.connect(self.open_email_and_redirect) 
+        self.email_list.itemDoubleClicked.connect(self.open_email_without_redirect) 
         self.inbox_layout.addWidget(self.email_list)
 
-        # **Settings Button**
+        # Settings Button
         self.settings_button = QPushButton("Settings", self)
         self.settings_button.setStyleSheet("background-color: #1e64fe; color: white;")
         self.settings_button.clicked.connect(self.open_settings_window)
         self.inbox_layout.addWidget(self.settings_button)
 
-        # **Clear Button**
+        # Clear Button**
         self.clear_button = QPushButton("Clear", self)
         self.clear_button.setStyleSheet("background-color: black; color: white;")
         self.clear_button.clicked.connect(self.confirm_clear)
@@ -266,22 +297,22 @@ class PhishEye(QMainWindow):
 
         self.inbox_widget.setLayout(self.inbox_layout)
 
-        # **Tabs Setup**
+        # Tabs Setup
         self.tabs = QTabWidget(self)
         self.tabs.setTabsClosable(True)
         self.tabs.tabCloseRequested.connect(self.close_tab)
-        self.tabs.setMovable(True)  # Allow reordering
+        self.tabs.setMovable(True) 
 
-        # ✅ **Align tabs at the top left**
-        self.tabs.setTabPosition(QTabWidget.North)  # Tabs on top
-        self.tabs.setLayoutDirection(Qt.LeftToRight)  # Start from left side
+        # Align tabs at the top left
+        self.tabs.setTabPosition(QTabWidget.North)  
+        self.tabs.setLayoutDirection(Qt.LeftToRight)   
 
-        # **Inbox Tab (Fixed & Non-Closable)**
+        # Inbox Tab (Fixed & Non-Closable)
         self.tabs.addTab(self.inbox_widget, "📥 Inbox")
-        self.tabs.tabBar().setTabButton(0, QTabBar.RightSide, None)  # Make non-closable
-        self.tabs.tabBar().setExpanding(False)  # Prevent stretching
+        self.tabs.tabBar().setTabButton(0, QTabBar.RightSide, None)  
+        self.tabs.tabBar().setExpanding(False)  
 
-        # **Logout Button (Right Aligned)**
+        # Logout Button (Right Aligned)
         logout_layout = QHBoxLayout()
         logout_layout.addStretch()
         self.logout_button = QPushButton("Logout")
@@ -289,14 +320,14 @@ class PhishEye(QMainWindow):
         self.logout_button.clicked.connect(self.confirm_logout)
         logout_layout.addWidget(self.logout_button)
 
-        # **Bottom Layout (Align Buttons Properly)**
+        # Bottom Layout (Align Buttons Properly)
         bottom_layout = QHBoxLayout()
         bottom_layout.addWidget(self.settings_button)
         bottom_layout.addWidget(self.clear_button)
         bottom_layout.addStretch()
         bottom_layout.addWidget(self.logout_button)
 
-        # **Final Layout**
+        # Final Layout
         main_layout.addWidget(self.tabs)
         main_layout.addLayout(bottom_layout)
 
@@ -333,38 +364,38 @@ class PhishEye(QMainWindow):
         # Determine Text Color Based on Dark Mode
         text_color = "white" if self.dark_mode else "black"
 
-        # **Profile Picture**
+        # Profile Picture
         profile_picture = self.fetch_profile_picture(self.email)
         profile_label = QLabel(self.settings_window)
         profile_label.setPixmap(profile_picture.scaled(100, 100, Qt.KeepAspectRatio, Qt.SmoothTransformation))
         profile_label.setAlignment(Qt.AlignCenter)
         layout.addWidget(profile_label)
 
-        # **User Name**
+        # User Name
         full_name = self.fetch_user_full_name()
         name_label = QLabel(f"<b>{full_name}</b>")
         name_label.setStyleSheet(f"font-size: 20px; color: {text_color};")
         name_label.setAlignment(Qt.AlignCenter)
         layout.addWidget(name_label)
 
-        # **Email ID**
+        # Email ID
         email_label = QLabel(f"{self.email}")
         email_label.setStyleSheet(f"font-size: 16px; color: {text_color};")
         email_label.setAlignment(Qt.AlignCenter)
         layout.addWidget(email_label)
 
-        # **IMAP Server (Optional)**
+        # IMAP Server (Optional)
         imap_label = QLabel(f"IMAP Server: {self.imap_server}")
         imap_label.setStyleSheet(f"font-size: 14px; color: {text_color};")
         imap_label.setAlignment(Qt.AlignCenter)
         layout.addWidget(imap_label)
 
-        # **Dark Mode Toggle**
+        # Dark Mode Toggle
         self.dark_mode_button = QPushButton("Toggle Dark Mode", self)
         self.dark_mode_button.clicked.connect(lambda: [self.toggle_dark_mode(), self.update_settings_text_color()])
         layout.addWidget(self.dark_mode_button, alignment=Qt.AlignCenter)
 
-        # **Close Button**
+        # Close Button
         close_button = QPushButton("Close")
         close_button.clicked.connect(self.settings_window.close)
         layout.addWidget(close_button, alignment=Qt.AlignCenter)
@@ -375,7 +406,7 @@ class PhishEye(QMainWindow):
     def update_settings_text_color(self, text_color=None):
         """Update the text color of user details in the settings window."""
         if not hasattr(self, "settings_window") or not self.settings_window.isVisible():
-            return  # Exit if the settings window is not open
+            return  
 
         text_color = text_color or ("white" if self.dark_mode else "black")
 
@@ -390,7 +421,7 @@ class PhishEye(QMainWindow):
             if status != "OK" or not messages[0]:
                 return "Unknown"
 
-            latest_email_id = messages[0].split()[-1]  # Get latest email ID
+            latest_email_id = messages[0].split()[-1] 
             status, msg_data = self.imap.fetch(latest_email_id, "(RFC822)")
             if status != "OK":
                 return "Unknown"
@@ -409,7 +440,7 @@ class PhishEye(QMainWindow):
 
     def fetch_profile_picture(self, email):
         """Fetch profile picture from Gravatar using the user's email."""
-        default_avatar = QPixmap("img/default_avatar.png")  # Local default image
+        default_avatar = QPixmap("img/default_avatar.png")   
         email_hash = hashlib.md5(email.strip().lower().encode()).hexdigest()
         gravatar_url = f"https://www.gravatar.com/avatar/{email_hash}?s=100&d=identicon"
 
@@ -422,7 +453,7 @@ class PhishEye(QMainWindow):
         except Exception as e:
             print(f"Error fetching profile picture: {e}")
 
-        return default_avatar  # Return default avatar if Gravatar fails
+        return default_avatar  
 
     def fetch_emails(self):
         """Fetch emails from the IMAP server."""
@@ -437,7 +468,7 @@ class PhishEye(QMainWindow):
                 QMessageBox.warning(self, "Error", "Failed to fetch emails.")
                 return
 
-            email_ids = messages[0].split()[::-1]  # Reverse to show latest emails first
+            email_ids = messages[0].split()[::-1]   
             self.email_list.clear()
 
             for email_id in email_ids:
@@ -519,8 +550,16 @@ class PhishEye(QMainWindow):
 
         self.display_email_content(subject, body, msg)
 
-    def display_email_content(self, subject, body, msg):
+    def display_email_content(self, subject, msg):
         """Display email content and metadata with proper formatting and attachments."""
+        
+        short_subject = self.get_short_subject(subject, length=15)
+
+        # Check if email is already open, redirect to it instead of opening a new tab
+        for i in range(self.tabs.count()):
+            if self.tabs.tabText(i) == short_subject:
+                self.tabs.setCurrentIndex(i) 
+                return
 
         split_view_widget = QWidget(self)
         split_view_layout = QHBoxLayout()
@@ -537,7 +576,7 @@ class PhishEye(QMainWindow):
         raw_date = msg.get("Date")
         formatted_date, formatted_time = self.format_datetime(raw_date)
 
-        # **Email Header Details**
+        # Email Header Details
         email_details_layout = QGridLayout()
         subject_label = QLabel(f"<b>Subject:</b> {subject}")
         email_details_layout.addWidget(subject_label, 0, 0)
@@ -552,14 +591,16 @@ class PhishEye(QMainWindow):
 
         left_panel_layout.addLayout(email_details_layout)
 
-        # **Properly Format Email Body**
+        # Extract Email Body
+        body = self.extract_email_body(msg)
+
         formatted_body = self.format_email_body(body)
 
         email_body_browser = QTextBrowser(self)
-        email_body_browser.setHtml(formatted_body)  # Display formatted email content
+        email_body_browser.setHtml(formatted_body)
         left_panel_layout.addWidget(email_body_browser)
 
-        # **Display Attachments at the Bottom**
+        # Display Attachments at the Bottom
         attachments = self.extract_attachments(msg)
         if attachments:
             attachments_label = QLabel("<b>Attachments:</b>")
@@ -570,7 +611,7 @@ class PhishEye(QMainWindow):
 
         left_panel_widget.setLayout(left_panel_layout)
 
-        # Right Panel: Metadata (Optional)
+        # Right Panel: Metadata
         right_panel_widget = QWidget(self)
         right_panel_layout = QVBoxLayout()
 
@@ -581,7 +622,7 @@ class PhishEye(QMainWindow):
         metadata_table.setEditTriggers(QTableWidget.NoEditTriggers)
 
         received_headers = msg.get_all("Received", [])
-        metadata = [( "Received Header", header) for header in received_headers]
+        metadata = [("Received Header", header) for header in received_headers]
         metadata.extend([
             ("Message-ID", msg.get("Message-ID", "N/A")),
             ("Return-Path", msg.get("Return-Path", "N/A")),
@@ -597,8 +638,8 @@ class PhishEye(QMainWindow):
 
         right_panel_layout.addWidget(metadata_table)
 
-        # Analyse Button
-        self.analyse_button = QPushButton("Analyse", self)
+        # Analyze Button
+        self.analyse_button = QPushButton("Analyze", self)
         self.analyse_button.setStyleSheet("""
             QPushButton {
                 background-color: #1e64fe;
@@ -607,7 +648,7 @@ class PhishEye(QMainWindow):
                 padding: 10px;
             }
             QPushButton:hover {
-                background-color: #1e64fe;
+                background-color: #1652cc;
             }
         """)
         self.analyse_button.clicked.connect(self.open_email_analysis_window)
@@ -615,22 +656,43 @@ class PhishEye(QMainWindow):
 
         right_panel_widget.setLayout(right_panel_layout)
 
-        # Add both panels to the split view
+        # Add Both Panels to the Split View
         split_view_layout.addWidget(left_panel_widget, 2)
         split_view_layout.addWidget(right_panel_widget, 1)
 
         split_view_widget.setLayout(split_view_layout)
 
-        # Add as a new tab
-        self.tabs.addTab(split_view_widget, subject)
-    
-    def format_email_body(self, body):
-        """Format email body to preserve paragraphs and line breaks like Gmail."""
-        
-        if not body:
-            return "<i>No content available</i>"
+        # Add as a New Tab
+        self.tabs.addTab(split_view_widget, short_subject)
+        self.tabs.setCurrentWidget(split_view_widget) 
 
-        # Convert newline characters to HTML <br> for proper formatting
+    def extract_email_body(self, msg):
+        """Extracts the email body and ensures it is always returned as a string."""
+        body = None
+
+        if msg.is_multipart():
+            for part in msg.walk():
+                content_type = part.get_content_type()
+                if content_type == "text/plain":
+                    try:
+                        body = part.get_payload(decode=True).decode(part.get_content_charset() or 'utf-8')
+                        break  
+                    except:
+                        continue 
+        else:
+            try:
+                body = msg.get_payload(decode=True).decode(msg.get_content_charset() or 'utf-8')
+            except:
+                body = None
+
+        return body if body else "No email content available."  
+
+    def format_email_body(self, body):
+        """Format the email body to preserve paragraphs and line breaks."""
+        
+        if not isinstance(body, str):  
+            return "<i>No email content available.</i>"
+
         formatted_body = body.replace("\n\n", "</p><p>").replace("\n", "<br>")
 
         return f"<p>{formatted_body}</p>"
@@ -638,7 +700,7 @@ class PhishEye(QMainWindow):
     def open_email_analysis_window(self):
         """Open a new window for detailed email analysis with dynamic text color."""
         current_tab_index = self.tabs.currentIndex()
-        if current_tab_index == 0:  # Inbox tab is selected
+        if current_tab_index == 0:  
             QMessageBox.warning(self, "Error", "Please select an email to analyze.")
             return
 
@@ -659,8 +721,6 @@ class PhishEye(QMainWindow):
         email_content = email_body_browser.toPlainText()
         urls = self.extract_urls(email_content)
 
-        items = attachments + urls
-
         self.email_analysis_window = QMainWindow(self)
         self.email_analysis_window.setWindowTitle("Detailed Email Analysis")
         self.email_analysis_window.setFixedSize(800, 500)
@@ -670,26 +730,26 @@ class PhishEye(QMainWindow):
 
         main_layout = QVBoxLayout()
 
-        # **Dynamic Text Color Based on Dark Mode**
+        # Dynamic Text Color Based on Dark Mode
         text_color = "white" if self.dark_mode else "black"
 
         section_label = QLabel("<b>Attachments and URLs:</b>")
         section_label.setStyleSheet(f"font-size: 16px; font-weight: bold; color: {text_color};")
         main_layout.addWidget(section_label)
 
-        if items:
+        if attachments or urls:
             scroll_area = QScrollArea()
             scroll_area.setWidgetResizable(True)
             scroll_widget = QWidget()
             scroll_layout = QVBoxLayout(scroll_widget)
 
-            for item in items:
+            for attachment in attachments:
                 row_widget = QWidget()
                 row_layout = QHBoxLayout(row_widget)
 
-                item_label = QLabel(item)
-                item_label.setStyleSheet(f"font-size: 14px; color: {text_color};")
-                row_layout.addWidget(item_label, stretch=1)
+                attachment_label = QLabel(attachment)
+                attachment_label.setStyleSheet(f"font-size: 14px; color: {text_color};")
+                row_layout.addWidget(attachment_label, stretch=1)
 
                 malware_button = QPushButton("Check for Malware")
                 malware_button.setFixedSize(150, 30)
@@ -704,11 +764,11 @@ class PhishEye(QMainWindow):
                         background-color: #1652cc;
                     }
                 """)
-                malware_button.clicked.connect(lambda _, x=item: self.check_attachment_malware(x))
+                malware_button.clicked.connect(lambda _, x=attachment: self.check_attachment_malware(x))
                 row_layout.addWidget(malware_button)
 
-                safe_env_button = QPushButton("Check in Safe Environment")
-                safe_env_button.setFixedSize(150, 30)
+                safe_env_button = QPushButton("Open in Safe File Viewer")
+                safe_env_button.setFixedSize(180, 30)
                 safe_env_button.setStyleSheet("""
                     QPushButton {
                         background-color: #1e64fe;
@@ -720,7 +780,33 @@ class PhishEye(QMainWindow):
                         background-color: #1652cc;
                     }
                 """)
-                safe_env_button.clicked.connect(lambda _, x=item: self.check_attachment_safe_env(x))
+                safe_env_button.clicked.connect(lambda _, x=attachment: subprocess.Popen(["python", "safe_file_browser.py", x]))
+                row_layout.addWidget(safe_env_button)
+
+                scroll_layout.addWidget(row_widget)
+
+            for url in urls:
+                row_widget = QWidget()
+                row_layout = QHBoxLayout(row_widget)
+
+                url_label = QLabel(url)
+                url_label.setStyleSheet(f"font-size: 14px; color: {text_color};")
+                row_layout.addWidget(url_label, stretch=1)
+
+                safe_env_button = QPushButton("Open in Safe Browser")
+                safe_env_button.setFixedSize(180, 30)
+                safe_env_button.setStyleSheet("""
+                    QPushButton {
+                        background-color: #1e64fe;
+                        color: white;
+                        border-radius: 5px;
+                        font-size: 12px;
+                    }
+                    QPushButton:hover {
+                        background-color: #1652cc;
+                    }
+                """)
+                safe_env_button.clicked.connect(lambda _, x=url: subprocess.Popen(["python", "browser.py", x]))
                 row_layout.addWidget(safe_env_button)
 
                 scroll_layout.addWidget(row_widget)
@@ -728,7 +814,7 @@ class PhishEye(QMainWindow):
             scroll_area.setWidget(scroll_widget)
             main_layout.addWidget(scroll_area)
         else:
-            no_items_label = QLabel("There is nothing attached.")
+            no_items_label = QLabel("There are no attachments or URLs.")
             no_items_label.setStyleSheet(f"font-size: 14px; color: {text_color};")
             main_layout.addWidget(no_items_label)
 
@@ -750,11 +836,11 @@ class PhishEye(QMainWindow):
 
         central_widget.setLayout(main_layout)
         self.email_analysis_window.show()
-    
+        
     def update_analysis_text_color(self, text_color=None):
         """Update the text color of user details in the analysis window."""
         if not hasattr(self, "email_analysis_window") or not self.email_analysis_window.isVisible():
-            return  # Exit if the analysis window is not open
+            return  
 
         text_color = text_color or ("white" if self.dark_mode else "black")
 
@@ -779,9 +865,94 @@ class PhishEye(QMainWindow):
         urls = url_pattern.findall(email_content)
         return urls
     
-    def check_attachment_safe_env(self, attachment):
-        """Placeholder for checking an attachment in a safe environment."""
-        QMessageBox.information(self, "Safe Environment Check", f"Checking {attachment} in a safe environment...")
+    def check_attachment_safe_env(self, attachment_data, attachment_name):
+        """Open an email attachment in a safe sandbox without saving it to disk."""
+        if not attachment_data or not attachment_name:
+            QMessageBox.warning(self, "Error", "No attachment selected or invalid file.")
+            return
+
+        # Create a Temporary RAM-Based Directory
+        temp_dir = tempfile.mkdtemp()
+        sandboxed_file = os.path.join(temp_dir, attachment_name)
+
+        try:
+            # Write file to RAM (Not permanent storage)
+            with open(sandboxed_file, "wb") as temp_file:
+                temp_file.write(attachment_data)
+
+            # Open File in Sandbox
+            if os.name == "nt":  
+                subprocess.run(["sandboxie", sandboxed_file], check=True)
+            else: 
+                subprocess.run(["firejail", "--noprofile", sandboxed_file], check=True)
+
+            QMessageBox.information(self, "Sandbox", f"File {attachment_name} is opened in a safe environment.")
+
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to open file in sandbox: {e}")
+
+        finally:
+            # Ensure Sandbox is Cleaned Up After Execution
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+    def open_attachment_safely(self, attachment_name, attachment_data):
+        """Open an attached file in the Safe File Browser and ensure it launches properly."""
+        safe_file_browser_path = os.path.join(os.path.dirname(__file__), "safe_file_browser.py")
+
+        if not os.path.exists(safe_file_browser_path):
+            QMessageBox.critical(self, "Error", "Safe File Browser not found!")
+            return
+
+        try:
+            process = subprocess.Popen(
+                ["python3", safe_file_browser_path, attachment_name], 
+                stdin=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
+            )
+            process.stdin.write(attachment_data)
+            process.stdin.close()
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to open attachment safely: {e}")
+
+    def open_url_safely(self, url):
+        """Open a URL in the Secure Web Browser."""
+        if not url.startswith("http://") and not url.startswith("https://"):
+            url = "https://" + url
+        
+        try:
+            # Launch the Secure Web Browser
+            subprocess.Popen(["python", "browser.py", url])
+        
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to open URL in safe environment: {e}")
+
+    def debug_email_parts(self, msg):
+        """Prints all parts of an email for debugging attachment issues."""
+        print("🔍 Debugging Email Parts...")
+        for part in msg.walk():
+            print(f"➡️ Content Type: {part.get_content_type()}")
+            print(f"➡️ Content-Disposition: {part.get('Content-Disposition')}")
+            print(f"➡️ Filename: {part.get_filename()}")
+
+    def get_attachment_from_email(self, msg):
+        """Extract the first attachment from an email without saving it to disk."""
+        if not isinstance(msg, email.message.Message):  
+            QMessageBox.critical(self, "Error", "Invalid email format.")
+            return None, None
+
+        for part in msg.walk():
+            content_disposition = part.get("Content-Disposition", "")
+
+            # Check if the part is an attachment
+            if "attachment" in content_disposition:
+                attachment_name = part.get_filename()
+                attachment_data = part.get_payload(decode=True)
+
+                if attachment_name and attachment_data:
+                    return attachment_data, attachment_name   
+
+        return None, None  
 
     def check_attachment_malware(self, attachment):
         """Scan the attachment for malware and display the analysis results."""
@@ -789,17 +960,16 @@ class PhishEye(QMainWindow):
             QMessageBox.warning(self, "Error", "No file selected.")
             return
 
-        # **Create Analyzing Window**
+        # Create Analyzing Window
         self.analyzing_window = QDialog(self)
         self.analyzing_window.setWindowTitle(f"Analyzing {attachment}")
         self.analyzing_window.setFixedSize(500, 400)
 
         layout = QVBoxLayout()
 
-        # **File Type-Based Threats**
+        # File Type-Based Threats
         file_ext = os.path.splitext(attachment)[1].lower()
         threats = self.get_potential_threats(file_ext)
-
         threat_label = QLabel("<b>Potential Threats:</b>")
         threat_label.setStyleSheet("font-size: 16px; font-weight: bold;")
         layout.addWidget(threat_label)
@@ -808,10 +978,11 @@ class PhishEye(QMainWindow):
         threats_text.setPlainText("\n".join(threats) if threats else "No specific threats detected for this file type.")
         layout.addWidget(threats_text)
 
-        # **Perform Malware Scan**
-        scan_result = self.scan_file_for_malware(attachment)
+        # Perform Malware Scan
+        scan_result = self.scan_for_malware(attachment) 
+        QMessageBox.information(self, "Malware Scan Result", scan_result)
 
-        # **Display Scan Results**
+        # Display Scan Results
         result_label = QLabel("<b>Scan Results:</b>")
         result_label.setStyleSheet("font-size: 16px; font-weight: bold;")
         layout.addWidget(result_label)
@@ -820,13 +991,25 @@ class PhishEye(QMainWindow):
         result_text.setPlainText(scan_result)
         layout.addWidget(result_text)
 
-        # **Close Button**
+        # Close Button
         close_button = QPushButton("Close")
         close_button.clicked.connect(self.analyzing_window.close)
         layout.addWidget(close_button)
 
         self.analyzing_window.setLayout(layout)
         self.analyzing_window.exec_()
+
+    def extract_attachment(self, email_msg, attachment_name):
+        """Extract an attachment from an email message and return its data."""
+        for part in email_msg.walk():
+            content_disposition = part.get("Content-Disposition", "")
+
+            if "attachment" in content_disposition:
+                filename = part.get_filename()
+                if filename and filename == attachment_name:
+                    return part.get_payload(decode=True), filename  
+
+        return None, None  
 
     def get_potential_threats(self, file_ext):
         """Return common threats based on file extension."""
@@ -840,26 +1023,127 @@ class PhishEye(QMainWindow):
         }
         return threats_dict.get(file_ext, ["Unknown threats or safe file type."])
 
-    def scan_file_for_malware(self, file_path):
-        """Scan a file using ClamAV and return the result."""
+    def load_malware_models(self):
+        """Load AI models for URL and file malware detection."""
         try:
-            result = subprocess.run(["clamscan", file_path], capture_output=True, text=True)
-
-            if "FOUND" in result.stdout:
-                return f"⚠️ Malware Detected: {result.stdout.split(':')[-1].strip()}"
-            else:
-                return f"✅ {os.path.basename(file_path)} is safe to open."
-        
+            self.url_model = tf.keras.models.load_model("model/url.h5")
+            print("✅ URL Malware Model Loaded Successfully!")
         except Exception as e:
-            return f"Error scanning file: {e}"
+            print(f"❌ Error loading URL model: {e}")
+            self.url_model = None
 
+        try:
+            self.file_model = tf.keras.models.load_model("model/file.h5")
+            print("✅ File Malware Model Loaded Successfully!")
+        except Exception as e:
+            print(f"❌ Error loading File model: {e}")
+            self.file_model = None
+
+    def preprocess_url(self, url):
+        """Preprocess the URL to match the AI model's expected input shape (1, 16)."""
+        url = url.lower()  
+        url = re.sub(r"[^a-zA-Z0-9./:?=]", "", url)  # Remove special characters
+
+        # Convert URL to ASCII numeric values
+        url_vector = np.array([ord(c) for c in url if ord(c) < 128])[:16]  # Limit to 16 chars
+
+        # Pad with zeros if it's shorter than 16 chars
+        if len(url_vector) < 16:
+            url_vector = np.pad(url_vector, (0, 16 - len(url_vector)), 'constant')
+
+        return np.expand_dims(url_vector, axis=0)  # Ensure it has shape (1, 16)
+
+    def scan_for_malware(self, input_data, email_msg=None):
+        """Scan a file or URL for malware using AI models and ClamAV."""
+        try:
+            # Check URLs using the AI model (`url.h5`)
+            if input_data.startswith("http://") or input_data.startswith("https://"):
+                if self.url_model:
+                    url_input = self.preprocess_url(input_data)
+                    prediction = self.url_model.predict(url_input)[0][0]  # Output probability
+
+                    if prediction > 0.5:
+                        return f"⚠️ Malicious URL Detected: {input_data}"
+                    else:
+                        return f"✅ Safe URL: {input_data}"
+                else:
+                    return "❌ AI Model not loaded for URL scanning."
+
+            # Extract Attachments and Scan Using `file_model.h5`
+            if email_msg:
+                attachment_data, attachment_name = self.extract_attachment(email_msg, input_data)
+                if attachment_data:
+                    return self.scan_attachment_ai(attachment_data, attachment_name)  # Use AI Model
+                else:
+                    return f"❌ Error: Attachment '{input_data}' not found in the email."
+
+            # Use ClamAV if `file_model.h5` is unavailable
+            if os.path.exists(input_data):
+                result = subprocess.run(["clamscan", input_data], capture_output=True, text=True)
+                if "FOUND" in result.stdout:
+                    return f"⚠️ Malware Detected: {result.stdout.split(':')[-1].strip()}"
+                else:
+                    return f"✅ {os.path.basename(input_data)} is safe to open."
+
+            return f"❌ Error: File not found - {input_data}"
+
+        except Exception as e:
+            return f"❌ Error scanning input: {e}"
+    
+    def scan_attachment_ai(self, file_data, filename):
+        """Use AI to scan an email attachment for malware."""
+        if not self.file_model:
+            return "❌ AI Model not loaded for file scanning."
+
+        # Convert file data into a format suitable for AI model
+        file_vector = self.preprocess_file(file_data)
+
+        # Make AI prediction
+        prediction = self.file_model.predict(file_vector)[0][0]  # Output probability
+
+        if prediction > 0.5:
+            return f"⚠️ Malicious File Detected: {filename}"
+        else:
+            return f"✅ Safe File: {filename}"
+
+    def preprocess_file(self, file_data):
+        """Convert a file's raw binary data into a numerical format suitable for the AI model."""
+        import numpy as np
+
+        # Convert raw bytes to numerical features
+        byte_array = np.frombuffer(file_data, dtype=np.uint8)[:1000]  # Limit to 1000 bytes
+
+        # Pad with zeros if shorter
+        if len(byte_array) < 1000:
+            byte_array = np.pad(byte_array, (0, 1000 - len(byte_array)), 'constant')
+
+        return np.expand_dims(byte_array, axis=0)  # Ensure correct input shape
+
+    def scan_attachment_memory(self, file_data, filename):
+        """Scan an attachment directly from memory without saving it to disk."""
+        try:
+            with tempfile.NamedTemporaryFile(delete=True) as temp_file:
+                temp_file.write(file_data)
+                temp_file.flush() 
+
+                # Scan the temporary file
+                result = subprocess.run(["clamscan", temp_file.name], capture_output=True, text=True)
+                
+                if "FOUND" in result.stdout:
+                    return f"⚠️ Malware Detected in {filename}"
+                else:
+                    return f"✅ {filename} is safe to open."
+
+        except Exception as e:
+            return f"❌ Error scanning attachment: {e}"
+    
     def check_url_safe_env(self, url):
         """Placeholder for checking a URL in a safe environment."""
         QMessageBox.information(self, "Safe Environment Check", f"Checking {url} in a safe environment...")
 
     def check_url_malware(self, url):
         """Placeholder for checking a URL for malware."""
-        safe = False  # Example outcome
+        safe = False 
         if safe:
             QMessageBox.information(self, "Malware Check", f"{url} is safe.")
         else:
