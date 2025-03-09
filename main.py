@@ -19,7 +19,6 @@ import tempfile
 import shutil
 import tensorflow as tf
 import numpy as np
-import re
 
 class PhishEye(QMainWindow):
     def __init__(self):
@@ -723,7 +722,7 @@ class PhishEye(QMainWindow):
 
         self.email_analysis_window = QMainWindow(self)
         self.email_analysis_window.setWindowTitle("Detailed Email Analysis")
-        self.email_analysis_window.setFixedSize(800, 500)
+        self.email_analysis_window.setFixedSize(1000, 500)
 
         central_widget = QWidget()
         self.email_analysis_window.setCentralWidget(central_widget)
@@ -793,6 +792,22 @@ class PhishEye(QMainWindow):
                 url_label.setStyleSheet(f"font-size: 14px; color: {text_color};")
                 row_layout.addWidget(url_label, stretch=1)
 
+                dir_check_button = QPushButton("Directory Check")
+                dir_check_button.setFixedSize(150, 30)
+                dir_check_button.setStyleSheet("""
+                    QPushButton {
+                        background-color: #1e64fe;
+                        color: white;
+                        border-radius: 5px;
+                        font-size: 12px;
+                    }
+                    QPushButton:hover {
+                        background-color: #1652cc;
+                    }
+                """)
+                dir_check_button.clicked.connect(lambda _, x=url: subprocess.Popen(["python", "directory_check.py", "--url", x]))
+                row_layout.addWidget(dir_check_button)
+
                 safe_env_button = QPushButton("Open in Safe Browser")
                 safe_env_button.setFixedSize(180, 30)
                 safe_env_button.setStyleSheet("""
@@ -808,6 +823,22 @@ class PhishEye(QMainWindow):
                 """)
                 safe_env_button.clicked.connect(lambda _, x=url: subprocess.Popen(["python", "browser.py", x]))
                 row_layout.addWidget(safe_env_button)
+                
+                check_malicious_button = QPushButton("Check if Malicious")
+                check_malicious_button.setFixedSize(180, 30)
+                check_malicious_button.setStyleSheet("""
+                    QPushButton {
+                        background-color: #FF8C00;
+                        color: white;
+                        border-radius: 5px;
+                        font-size: 12px;
+                    }
+                    QPushButton:hover {
+                        background-color: #FF7000;
+                    }
+                """)
+                check_malicious_button.clicked.connect(lambda _, x=url: subprocess.Popen(["python", "url_detection.py", "--url", x]))
+                row_layout.addWidget(check_malicious_button)
 
                 scroll_layout.addWidget(row_widget)
 
@@ -865,36 +896,6 @@ class PhishEye(QMainWindow):
         urls = url_pattern.findall(email_content)
         return urls
     
-    def check_attachment_safe_env(self, attachment_data, attachment_name):
-        """Open an email attachment in a safe sandbox without saving it to disk."""
-        if not attachment_data or not attachment_name:
-            QMessageBox.warning(self, "Error", "No attachment selected or invalid file.")
-            return
-
-        # Create a Temporary RAM-Based Directory
-        temp_dir = tempfile.mkdtemp()
-        sandboxed_file = os.path.join(temp_dir, attachment_name)
-
-        try:
-            # Write file to RAM (Not permanent storage)
-            with open(sandboxed_file, "wb") as temp_file:
-                temp_file.write(attachment_data)
-
-            # Open File in Sandbox
-            if os.name == "nt":  
-                subprocess.run(["sandboxie", sandboxed_file], check=True)
-            else: 
-                subprocess.run(["firejail", "--noprofile", sandboxed_file], check=True)
-
-            QMessageBox.information(self, "Sandbox", f"File {attachment_name} is opened in a safe environment.")
-
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to open file in sandbox: {e}")
-
-        finally:
-            # Ensure Sandbox is Cleaned Up After Execution
-            shutil.rmtree(temp_dir, ignore_errors=True)
-
     def open_attachment_safely(self, attachment_name, attachment_data):
         """Open an attached file in the Safe File Browser and ensure it launches properly."""
         safe_file_browser_path = os.path.join(os.path.dirname(__file__), "safe_file_browser.py")
@@ -926,14 +927,6 @@ class PhishEye(QMainWindow):
         
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to open URL in safe environment: {e}")
-
-    def debug_email_parts(self, msg):
-        """Prints all parts of an email for debugging attachment issues."""
-        print("🔍 Debugging Email Parts...")
-        for part in msg.walk():
-            print(f"➡️ Content Type: {part.get_content_type()}")
-            print(f"➡️ Content-Disposition: {part.get('Content-Disposition')}")
-            print(f"➡️ Filename: {part.get_filename()}")
 
     def get_attachment_from_email(self, msg):
         """Extract the first attachment from an email without saving it to disk."""

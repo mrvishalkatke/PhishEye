@@ -67,7 +67,7 @@ class SecureWebBrowser(QMainWindow):
 
     def handle_download(self, download):
         """Show a popup warning when an automatic download is detected."""
-        QMessageBox.critical(self, "Warning", "⚠️ Malicious Activity Detected: A site attempted to download a file automatically!")
+        QMessageBox.critical(self, "Warning", "Malicious Activity Detected!")
         download.cancel()
     
     def update_address_bar(self, url):
