@@ -29,7 +29,6 @@ class PhishEye(QMainWindow):
         self.imap = None
         self.url_model = None  
         self.file_model = None  
-        self.load_malware_models()  
         self.dark_mode = True 
         self.toggle_dark_mode()
         self.init_login_ui()
@@ -837,7 +836,7 @@ class PhishEye(QMainWindow):
                         background-color: #FF7000;
                     }
                 """)
-                check_malicious_button.clicked.connect(lambda _, x=url: subprocess.Popen(["python", "url_detection.py", "--url", x]))
+                check_malicious_button.clicked.connect(lambda _, x=url: subprocess.Popen(["python", "url_detection.py", "--url", x, "--dark" if self.dark_mode else ""]))
                 row_layout.addWidget(check_malicious_button)
 
                 scroll_layout.addWidget(row_widget)
@@ -1016,22 +1015,6 @@ class PhishEye(QMainWindow):
         }
         return threats_dict.get(file_ext, ["Unknown threats or safe file type."])
 
-    def load_malware_models(self):
-        """Load AI models for URL and file malware detection."""
-        try:
-            self.url_model = tf.keras.models.load_model("model/url.h5")
-            print("✅ URL Malware Model Loaded Successfully!")
-        except Exception as e:
-            print(f"❌ Error loading URL model: {e}")
-            self.url_model = None
-
-        try:
-            self.file_model = tf.keras.models.load_model("model/file.h5")
-            print("✅ File Malware Model Loaded Successfully!")
-        except Exception as e:
-            print(f"❌ Error loading File model: {e}")
-            self.file_model = None
-
     def preprocess_url(self, url):
         """Preprocess the URL to match the AI model's expected input shape (1, 16)."""
         url = url.lower()  
@@ -1143,27 +1126,29 @@ class PhishEye(QMainWindow):
             QMessageBox.warning(self, "Malware Check", f"{url} is potentially harmful!")
 
     def logout(self):
-        """Handle user logout and close all open windows."""
+        """Logout the user safely and return to the login screen."""
         try:
-            # Close all open windows
-            if hasattr(self, "email_analysis_window") and self.email_analysis_window.isVisible():
-                self.email_analysis_window.close()
-
-            if hasattr(self, "settings_window") and self.settings_window.isVisible():
-                self.settings_window.close()
-
-            # Close the main IMAP connection
             if self.imap:
-                self.imap.logout()
-            self.imap = None
+                self.imap.logout()  # Safely logout from IMAP
+                self.imap = None  # Ensure the object is reset
 
-            # Clear UI and return to login screen
-            self.statusBar().showMessage("Logged out.")
-            self.tabs.clear()
-            self.init_login_ui()
+            # Close all open email windows but keep the main application running
+            for i in range(self.tabs.count() - 1, 0, -1):  # Close all tabs except Inbox
+                self.tabs.removeTab(i)
+
+            # Reset the UI to show the login screen
+            self.clear_ui()  # Remove current UI elements
+            self.init_login_ui()  # Reinitialize the login screen
 
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"An unexpected error occurred during logout: {e}")
+            QMessageBox.critical(self, "Logout Error", f"An unexpected error occurred during logout:\n{e}")
+
+    def clear_ui(self):
+        """Clears the main window UI before switching to the login screen."""
+        for i in reversed(range(self.centralWidget().layout().count())):
+            widget = self.centralWidget().layout().itemAt(i).widget()
+            if widget:
+                widget.setParent(None)  # Remove widgets properly
 
     def confirm_logout(self):
         """Confirm logout action."""

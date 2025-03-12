@@ -2,7 +2,7 @@ import sys
 import xgboost as xgb
 import numpy as np
 from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QLabel, QLineEdit, QPushButton, QTextEdit
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import QTimer
 import re
 
 # Load the XGBoost model using its native JSON format
@@ -122,58 +122,110 @@ feature_names = [
 class PhishingURLDetector(QWidget):
     def __init__(self, url=None):
         super().__init__()
-        # If a URL is provided, store it and later set it as read-only
-        self.predefined_url = url
+        self.predefined_url = url  # Use URL directly
         self.initUI()
+
+        # Automatically start the scan with the given URL
+        if self.predefined_url:
+            QTimer.singleShot(100, self.scan_url)
 
     def initUI(self):
         self.setWindowTitle("Phishing URL Detector")
         self.setGeometry(200, 200, 400, 300)
+        self.center_window()
+        
         layout = QVBoxLayout()
-        # Address Field: pre-fill if a URL is provided
-        self.url_input = QLineEdit(self)
-        if self.predefined_url:
-            self.url_input.setText(self.predefined_url)
-            self.url_input.setReadOnly(True)
-        else:
-            self.url_input.setPlaceholderText("Enter URL here...")
-        layout.addWidget(self.url_input)
-        # Button to check URL
-        self.scan_button = QPushButton("Check if Malicious", self)
-        self.scan_button.clicked.connect(self.scan_url)
-        layout.addWidget(self.scan_button)
+        
+        # URL Display Label
+        self.url_label = QLabel(f"<b>Scanning URL:</b> {self.predefined_url or 'N/A'}", self)
+        self.url_label.setWordWrap(True)
+        layout.addWidget(self.url_label)
+
         # Result Label
         self.result_label = QLabel("Result: ", self)
         layout.addWidget(self.result_label)
+
         # Reason Text
         self.reason_text = QTextEdit(self)
         self.reason_text.setReadOnly(True)
         layout.addWidget(self.reason_text)
+
         self.setLayout(layout)
 
+    def center_window(self):
+        """Center the window on the screen."""
+        screen = QApplication.primaryScreen().geometry()
+        window = self.frameGeometry()
+        center_point = screen.center()
+        window.moveCenter(center_point)
+        self.move(window.topLeft())
+
+    def apply_theme(self):
+        """Apply dark mode theme based on PhishEye settings."""
+        if self.dark_mode:
+            self.setStyleSheet("""
+                QWidget {
+                    background-color: #2b2b2b;
+                    color: white;
+                }
+                QLabel {
+                    color: #ffffff;
+                    font-weight: bold;
+                }
+                QTextEdit {
+                    background-color: #3c3f41;
+                    color: #ffffff;
+                    border: 1px solid #555;
+                }
+            """)
+        else:
+            self.setStyleSheet("""
+                QWidget {
+                    background-color: #ffffff;
+                    color: black;
+                }
+                QLabel {
+                    color: #000000;
+                    font-weight: bold;
+                }
+                QTextEdit {
+                    background-color: #f0f0f0;
+                    color: #000000;
+                    border: 1px solid #aaa;
+                }
+            """)
+
     def scan_url(self):
-        # Use the URL from the input field (which may be prepopulated and read-only)
-        url = self.url_input.text().strip()
-        if not url:
-            self.result_label.setText("Result: Please enter a valid URL.")
+        """Scan the predefined URL directly without user input."""
+        if not self.predefined_url:
+            self.result_label.setText("Result: No URL provided.")
             return
+
+        url = self.predefined_url.strip()
         features = extract_features(url)
         print("Extracted Features:", features)
         dmatrix = xgb.DMatrix(features, feature_names=feature_names)
         prediction = model.predict(dmatrix)
         print("Prediction:", prediction)
-        # Assuming binary classification with threshold 0.5
+
+        # Display result
         if prediction[0] >= 0.5:
             self.result_label.setText("Result: Malicious URL")
-            self.reason_text.setText("Reasons:\n- Suspicious patterns detected based on extracted features.\n- Review URL structure and content.")
+            self.reason_text.setText("Reasons:\n- Suspicious patterns detected.\n- Review URL structure and content.")
         else:
             self.result_label.setText("Result: Safe URL")
             self.reason_text.setText("Reasons:\n- URL structure appears normal.\n- No alarming patterns detected.")
 
 if __name__ == "__main__":
+    import sys
     app = QApplication(sys.argv)
-    # If you want to pass a URL directly, you can do so here:
-    # e.g., window = PhishingURLDetector("https://example.com")
-    window = PhishingURLDetector()  # or provide a URL as an argument
+    
+    # Extract URL argument directly from command line
+    url_argument = None
+    if len(sys.argv) > 1 and sys.argv[1] == "--url":
+        url_argument = sys.argv[2]
+    if "--dark" in sys.argv:
+        dark_mode = False
+    window = PhishingURLDetector(url_argument)
     window.show()
     sys.exit(app.exec_())
