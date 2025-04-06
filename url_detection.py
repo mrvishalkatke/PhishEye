@@ -1,11 +1,17 @@
 import sys
 import xgboost as xgb
 import numpy as np
-from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QLabel, QLineEdit, QPushButton, QTextEdit
-from PyQt5.QtCore import QTimer
+from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
+                             QLineEdit, QPushButton, QTextEdit, QGroupBox, QProgressBar)
+from PyQt5.QtCore import QTimer, Qt
+from PyQt5.QtGui import QFont, QColor, QPalette
 import re
+from openai import OpenAI
 
-# Load the XGBoost model using its native JSON format
+# Configuration - Set your OpenAI API key here
+client = OpenAI(api_key="0U4bHUVTyhEbfmZ99-_NL9SXNaLwd8OE-lECdjeJxdN2-VkdqGc1BCQ4E9jr_tN4b2QWNuwYNoT3BlbkFJCb9dJHiiRruIjW9jEK2NdE1wPBrnt1-ix22_5rJoSeg4LpZVai-h6m8rSnphhPRo6wUCpedCcA")
+
+# Load the XGBoost model
 model = xgb.Booster()
 model.load_model("Model/XGBoostClassifier.json")
 
@@ -119,38 +125,171 @@ feature_names = [
     "Request_URL_part_0"
 ]
 
-class PhishingURLDetector(QWidget):
+class EnhancedPhishingDetector(QWidget):
     def __init__(self, url=None):
         super().__init__()
-        self.predefined_url = url  # Use URL directly
+        self.predefined_url = url
+        self.dark_mode = False
         self.initUI()
+        self.apply_theme()
 
-        # Automatically start the scan with the given URL
         if self.predefined_url:
-            QTimer.singleShot(100, self.scan_url)
+            QTimer.singleShot(100, self.start_scan)
 
     def initUI(self):
-        self.setWindowTitle("Phishing URL Detector")
-        self.setGeometry(200, 200, 400, 300)
+        self.setWindowTitle("AI Phishing URL Analyzer")
+        self.setGeometry(200, 200, 600, 500)
         self.center_window()
+
+        main_layout = QVBoxLayout()
+        main_layout.setContentsMargins(20, 20, 20, 20)
+        main_layout.setSpacing(15)
+
+        # Header Section
+        header = QLabel("Phishing URL Detection System")
+        header.setFont(QFont("Arial", 14, QFont.Bold))
+        header.setAlignment(Qt.AlignCenter)
+        main_layout.addWidget(header)
+
+        # URL Display Group
+        url_group = QGroupBox("Scan Details")
+        url_layout = QVBoxLayout()
         
-        layout = QVBoxLayout()
-        
-        # URL Display Label
-        self.url_label = QLabel(f"<b>Scanning URL:</b> {self.predefined_url or 'N/A'}", self)
+        self.url_label = QLabel(f"<b>Target URL:</b> {self.predefined_url or 'Not specified'}")
         self.url_label.setWordWrap(True)
-        layout.addWidget(self.url_label)
+        url_layout.addWidget(self.url_label)
 
-        # Result Label
-        self.result_label = QLabel("Result: ", self)
-        layout.addWidget(self.result_label)
+        self.progress = QProgressBar()
+        self.progress.setRange(0, 100)
+        self.progress.setTextVisible(False)
+        url_layout.addWidget(self.progress)
 
-        # Reason Text
-        self.reason_text = QTextEdit(self)
-        self.reason_text.setReadOnly(True)
-        layout.addWidget(self.reason_text)
+        url_group.setLayout(url_layout)
+        main_layout.addWidget(url_group)
 
-        self.setLayout(layout)
+        # Results Group
+        results_group = QGroupBox("Analysis Results")
+        results_layout = QVBoxLayout()
+        
+        self.result_header = QLabel("Result: Scanning...")
+        self.result_header.setFont(QFont("Arial", 12, QFont.Bold))
+        results_layout.addWidget(self.result_header)
+
+        self.confidence_label = QLabel("Confidence: Calculating...")
+        results_layout.addWidget(self.confidence_label)
+
+        self.detail_label = QLabel("Feature Analysis:")
+        self.detail_text = QTextEdit()
+        self.detail_text.setReadOnly(True)
+        results_layout.addWidget(self.detail_label)
+        results_layout.addWidget(self.detail_text)
+
+        self.ai_reason_label = QLabel("AI Threat Assessment:")
+        self.ai_reason_text = QTextEdit()
+        self.ai_reason_text.setReadOnly(True)
+        results_layout.addWidget(self.ai_reason_label)
+        results_layout.addWidget(self.ai_reason_text)
+
+        results_group.setLayout(results_layout)
+        main_layout.addWidget(results_group)
+
+        self.setLayout(main_layout)
+
+    def start_scan(self):
+        self.progress.setValue(0)
+        QTimer.singleShot(100, self.perform_analysis)
+
+    def perform_analysis(self):
+        try:
+            self.progress.setValue(30)
+            url = self.predefined_url.strip()
+            features = extract_features(url)
+            dmatrix = xgb.DMatrix(features, feature_names=feature_names)
+            prediction = model.predict(dmatrix)[0]
+            confidence = round(prediction * 100, 2)
+
+            self.progress.setValue(60)
+            feature_analysis = self.get_feature_analysis(features[0])
+            ai_reason = self.generate_ai_reason(url, prediction, feature_analysis)
+
+            self.progress.setValue(90)
+            self.display_results(confidence, feature_analysis, ai_reason)
+            self.progress.setValue(100)
+
+        except Exception as e:
+            self.result_header.setText("Error in analysis")
+            self.detail_text.setText(str(e))
+
+    def get_feature_analysis(self, features):
+        analysis = []
+        feature_descriptions = {
+            'having_IP_Address': 'Uses IP address instead of domain name',
+            'Shortining_Service': 'Uses URL shortening service',
+            'having_At_Symbol': 'Contains @ symbol',
+            'double_slash_redirecting': 'Contains double slash redirect',
+            'Prefix_Suffix': 'Uses hyphens in domain name',
+            'having_Sub_Domain': 'Has multiple subdomains',
+            'HTTPS_token': 'Contains HTTPS in domain',
+            'Iframe': 'Contains iframe reference'
+        }
+        
+        for name, value in zip(feature_names, features):
+            if value != 0 and name in feature_descriptions:
+                analysis.append(f"• {feature_descriptions[name]}")
+        
+        return "\n".join(analysis) if analysis else "No strong security indicators detected"
+
+    def generate_ai_reason(self, url, prediction, features):
+        try:
+            # Check for valid API key structure
+            if not client.api_key.startswith("sk-") or len(client.api_key) < 30:
+                return self.get_fallback_analysis(prediction, features)
+            
+            prompt = f"""Analyze this URL for phishing risk: {url}
+            Model confidence: {prediction:.2f}
+            Key features: {features}
+            Provide a professional security assessment in 3-4 bullet points:"""
+            
+            response = client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=150
+            )
+            return response.choices[0].message.content.strip()
+        except Exception as e:
+            return self.get_fallback_analysis(prediction, features)
+
+    def get_fallback_analysis(self, prediction, features):
+        analysis = []
+        risk_level = "High risk" if prediction >= 0.7 else \
+                    "Moderate risk" if prediction >= 0.5 else \
+                    "Low risk"
+        
+        analysis.append(f"Automated Security Assessment ({risk_level}):")
+        
+        if features:
+            analysis.append("Key indicators found:")
+            analysis.extend(features.split("\n"))
+        else:
+            analysis.append("No strong security indicators detected")
+        
+        analysis.append("\nRecommendation: " + 
+            ("Avoid visiting this site" if prediction >= 0.5 
+            else "Exercise caution when visiting" if prediction >= 0.3 
+            else "Likely safe to visit"))
+        
+        return "\n".join(analysis)
+
+    def display_results(self, confidence, features, ai_reason):
+        color = QColor(200, 50, 50) if confidence >= 50 else QColor(50, 150, 50)
+        result_text = "Malicious URL" if confidence >= 50 else "Safe URL"
+        
+        self.result_header.setText(f"Result: {result_text}")
+        self.result_header.setStyleSheet(f"color: {color.name()};")
+        
+        self.confidence_label.setText(f"Confidence Level: {confidence}%")
+        self.detail_text.setText(features)
+        self.ai_reason_text.setText(ai_reason)
 
     def center_window(self):
         """Center the window on the screen."""
@@ -216,16 +355,15 @@ class PhishingURLDetector(QWidget):
             self.result_label.setText("Result: Safe URL")
             self.reason_text.setText("Reasons:\n- URL structure appears normal.\n- No alarming patterns detected.")
 
+    # Rest of existing methods (center_window, apply_theme) remain similar...
+    # Feature extraction function and feature_names list remain unchanged...
+
 if __name__ == "__main__":
-    import sys
     app = QApplication(sys.argv)
+    app.setStyle("Fusion")
     
-    # Extract URL argument directly from command line
-    url_argument = None
-    if len(sys.argv) > 1 and sys.argv[1] == "--url":
-        url_argument = sys.argv[2]
-    if "--dark" in sys.argv:
-        dark_mode = False
-    window = PhishingURLDetector(url_argument)
+    url_argument = sys.argv[2] if len(sys.argv) > 2 and sys.argv[1] == "--url" else None
+    window = EnhancedPhishingDetector(url_argument)
     window.show()
     sys.exit(app.exec_())
+    

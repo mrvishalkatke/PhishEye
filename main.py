@@ -1129,26 +1129,40 @@ class PhishEye(QMainWindow):
         """Logout the user safely and return to the login screen."""
         try:
             if self.imap:
-                self.imap.logout()  # Safely logout from IMAP
-                self.imap = None  # Ensure the object is reset
+                try:
+                    # Properly close the IMAP connection
+                    self.imap.shutdown()
+                    self.imap.logout()
+                except Exception as e:
+                    print(f"Clean logout failed: {e}")
+                finally:
+                    self.imap = None
 
-            # Close all open email windows but keep the main application running
-            for i in range(self.tabs.count() - 1, 0, -1):  # Close all tabs except Inbox
-                self.tabs.removeTab(i)
-
-            # Reset the UI to show the login screen
-            self.clear_ui()  # Remove current UI elements
-            self.init_login_ui()  # Reinitialize the login screen
-
+            # Add small delay for connection cleanup
+            QTimer.singleShot(500, self.clear_ui)
+            
         except Exception as e:
-            QMessageBox.critical(self, "Logout Error", f"An unexpected error occurred during logout:\n{e}")
+            QMessageBox.critical(self, "Logout Error", 
+                f"An unexpected error occurred during logout:\n{str(e)}")
 
     def clear_ui(self):
-        """Clears the main window UI before switching to the login screen."""
-        for i in reversed(range(self.centralWidget().layout().count())):
-            widget = self.centralWidget().layout().itemAt(i).widget()
-            if widget:
-                widget.setParent(None)  # Remove widgets properly
+        """Final cleanup after logout delay"""
+        try:
+            # Close all open email windows
+            for i in range(self.tabs.count() - 1, 0, -1):
+                self.tabs.removeTab(i)
+
+            # Reset UI
+            self.clear_ui()
+            self.init_login_ui()
+            
+            # Force garbage collection
+            import gc
+            gc.collect()
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Cleanup Error", 
+                f"Post-logout cleanup failed:\n{str(e)}")
 
     def confirm_logout(self):
         """Confirm logout action."""
